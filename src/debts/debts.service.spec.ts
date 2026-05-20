@@ -103,10 +103,12 @@ describe('POST /debts/simulate — Integração (2.x)', () => {
 
   describe('2.1 — Fallback entre provedores', () => {
     it('Provider A falha; Provider B retorna débitos → HTTP 200 usando dados do B', async () => {
-      jest.useFakeTimers();
+      // Fake only Date (not timers) so retry's setTimeout still runs
+      jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'queueMicrotask'] });
       jest.setSystemTime(new Date('2024-05-10T00:00:00Z'));
 
-      mock_provider_a.fetchDebts.mockRejectedValueOnce(new Error('timeout'));
+      // mockRejectedValue (permanent) so all retry attempts fail and service falls back to B
+      mock_provider_a.fetchDebts.mockRejectedValue(new Error('timeout'));
       mock_provider_b.fetchDebts.mockResolvedValueOnce([
         { tipo: 'MULTA', valor_original: 300.5, vencimento: '2024-02-15' },
       ]);
@@ -125,8 +127,9 @@ describe('POST /debts/simulate — Integração (2.x)', () => {
     });
 
     it('Ambos os provedores falham → HTTP 503 all_providers_unavailable', async () => {
-      mock_provider_a.fetchDebts.mockRejectedValueOnce(new Error('timeout'));
-      mock_provider_b.fetchDebts.mockRejectedValueOnce(new Error('timeout'));
+      // mockRejectedValue (permanent) so all retry attempts fail for both providers
+      mock_provider_a.fetchDebts.mockRejectedValue(new Error('timeout'));
+      mock_provider_b.fetchDebts.mockRejectedValue(new Error('timeout'));
 
       const res = await request(app.getHttpServer())
         .post('/debts/simulate')

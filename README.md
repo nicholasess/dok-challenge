@@ -1,6 +1,6 @@
 # dok — API de Simulação de Débitos Veiculares
 
-Backend NestJS 9 + TypeScript que consulta provedores de débitos veiculares, aplica regras de juros e retorna opções de pagamento simuladas (PIX e parcelamento no cartão de crédito).
+Backend NestJS 10 + TypeScript 5 que consulta provedores de débitos veiculares, aplica regras de juros e retorna opções de pagamento simuladas (PIX e parcelamento no cartão de crédito).
 
 ## Visão Geral
 
@@ -134,6 +134,8 @@ pnpm run start:prod
 
 O servidor sobe em `http://localhost:3000` por padrão.
 
+A documentação interativa do Swagger fica disponível em `http://localhost:3000/api`.
+
 ## API
 
 ### POST /debts/simulate
@@ -224,6 +226,10 @@ docs/
 
 Os dias de atraso são calculados a partir do vencimento do débito até a data de referência fixa `2024-05-10`. Débitos não vencidos não acumulam juros.
 
+## Documentação da API (Swagger)
+
+Com o servidor rodando, acesse `http://localhost:3000/api` para explorar o endpoint interativamente via Swagger UI.
+
 ## Testes
 
 ```bash
@@ -243,3 +249,22 @@ pnpm run test:cov
 pnpm run lint
 pnpm run format
 ```
+
+## Considerações de Deploy
+
+### Retry com backoff exponencial
+
+O `retryWithBackoff` opera inteiramente no contexto de cada requisição — sem estado compartilhado. Funciona em qualquer ambiente, incluindo múltiplas réplicas no Kubernetes.
+
+### Circuit Breaker (single-pod)
+
+O `CircuitBreaker` mantém estado **em memória dentro do processo**. Isso funciona corretamente para deploys de pod único. Em deploys multi-réplica no Kubernetes, cada pod tem seu próprio estado de circuit breaker, o que significa:
+
+- Um pod pode ter o circuit aberto para o Provider A enquanto outros pods ainda enviam tráfego para ele.
+- Não há coordenação de estado entre réplicas.
+
+**Sugestão de melhoria:** Para circuit breaking coordenado em ambientes multi-réplica, considere uma das seguintes abordagens:
+
+- **Service mesh (recomendado):** Istio ou Linkerd implementam circuit breaking na camada de infraestrutura, transparente para a aplicação.
+- **Estado compartilhado:** Armazenar contadores de falhas em Redis com TTL, permitindo que todas as réplicas compartilhem o estado do circuito.
+- **Biblioteca distribuída:** `cockatiel` com backend externo, ou soluções como Resilience4j (se migrar para JVM).

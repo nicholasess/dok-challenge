@@ -101,7 +101,8 @@ describe('POST /debts/simulate (e2e)', () => {
   });
 
   it('Provider A falha; Provider B disponível → HTTP 200 usando dados do Provider B', async () => {
-    jest.useFakeTimers();
+    // Fake only Date (not timers) so retry's setTimeout still runs
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'queueMicrotask'] });
     jest.setSystemTime(new Date('2024-05-10T00:00:00Z'));
 
     const debts: ProviderDebt[] = [

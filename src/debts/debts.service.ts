@@ -1,16 +1,22 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { BusinessError } from '../common/errors/business.errors';
 import { IProvider, ProviderDebt, PROVIDERS_TOKEN } from '../providers/provider.port';
 import { InterestService } from './entities/interest.service';
 import { PaymentsService } from '../payments/payments.service';
 import { getCurrentDate } from '../common/date/date.util';
 import { roundHalfUp } from '../common/money/money.util';
+import { maskPlate } from '../common/log/mask.util';
+import { retryWithBackoff } from '../common/resilience/retry.util';
+import { CircuitBreaker } from '../common/resilience/circuit-breaker.util';
 import { SimulateResponseDto } from './dto/simulate.dto';
 
 const VALID_TYPES = new Set(['IPVA', 'MULTA']);
 
 @Injectable()
 export class DebtsService {
+  private readonly logger = new Logger(DebtsService.name);
+  private readonly circuitBreaker = new CircuitBreaker();
+
   constructor(
     @Inject(PROVIDERS_TOKEN) private readonly providers: IProvider[],
     private readonly interestService: InterestService,
@@ -26,16 +32,47 @@ export class DebtsService {
   }
 
   async simulate(placa: string): Promise<SimulateResponseDto> {
+    const masked = maskPlate(placa);
+    this.logger.log({ event: 'simulate.start', placa: masked });
+
     let raw_debts: ProviderDebt[] | null = null;
-    for (const provider of this.providers) {
+    let providerIndex = -1;
+
+    for (let i = 0; i < this.providers.length; i++) {
+      const key = `provider-${i}`;
+
+      if (this.circuitBreaker.isOpen(key)) {
+        this.logger.warn({ event: 'provider.circuit_open', placa: masked, providerIndex: i });
+        continue;
+      }
+
+      const start = Date.now();
       try {
-        raw_debts = await provider.fetchDebts(placa);
+        raw_debts = await retryWithBackoff(() => this.providers[i].fetchDebts(placa));
+        this.circuitBreaker.recordSuccess(key);
+        providerIndex = i;
+        this.logger.log({
+          event: 'provider.success',
+          placa: masked,
+          providerIndex: i,
+          durationMs: Date.now() - start,
+          debtCount: raw_debts.length,
+        });
         break;
-      } catch {
-        // try next provider
+      } catch (err) {
+        this.circuitBreaker.recordFailure(key);
+        this.logger.warn({
+          event: 'provider.failure',
+          placa: masked,
+          providerIndex: i,
+          durationMs: Date.now() - start,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
+
     if (raw_debts === null) {
+      this.logger.error({ event: 'simulate.all_providers_unavailable', placa: masked });
       throw new BusinessError('all_providers_unavailable');
     }
 
@@ -84,6 +121,15 @@ export class DebtsService {
         pix: this.paymentsService.calcularPix(valor_base_num),
         cartao_credito: this.paymentsService.calcularCartao(valor_base_num),
       };
+    });
+
+    const tipos = [...new Set(debitos.map((d) => d.tipo))];
+    this.logger.log({
+      event: 'simulate.complete',
+      placa: masked,
+      providerIndex,
+      debtCount: debitos.length,
+      tipos,
     });
 
     return {
