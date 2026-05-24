@@ -64,6 +64,10 @@ describe('POST /debts/simulate (e2e)', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.debitos)).toBe(true);
     expect(res.body.debitos).toHaveLength(2);
+    const ipva = res.body.debitos.find((d: { tipo: string }) => d.tipo === 'IPVA');
+    expect(ipva.vencimento).toBe('2024-01-10');
+    const multa = res.body.debitos.find((d: { tipo: string }) => d.tipo === 'MULTA');
+    expect(multa.vencimento).toBe('2024-02-15');
     expect(res.body.resumo).toBeDefined();
     expect(res.body.resumo.total_original).toBe('1800.50');
     expect(res.body.resumo.total_atualizado).toBe('2355.93');

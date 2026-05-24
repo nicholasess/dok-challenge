@@ -256,15 +256,27 @@ pnpm run format
 
 O `retryWithBackoff` opera inteiramente no contexto de cada requisição — sem estado compartilhado. Funciona em qualquer ambiente, incluindo múltiplas réplicas no Kubernetes.
 
-### Circuit Breaker (single-pod)
+## Melhorias Futuras
 
-O `CircuitBreaker` mantém estado **em memória dentro do processo**. Isso funciona corretamente para deploys de pod único. Em deploys multi-réplica no Kubernetes, cada pod tem seu próprio estado de circuit breaker, o que significa:
+### Circuit Breaker distribuído
 
-- Um pod pode ter o circuit aberto para o Provider A enquanto outros pods ainda enviam tráfego para ele.
+O `CircuitBreaker` atual mantém estado **em memória dentro do processo**. Isso funciona corretamente para deploys de pod único. Em deploys multi-réplica no Kubernetes, cada pod tem seu próprio estado de circuit breaker, o que significa:
+
+- Um pod pode ter o circuit aberto para o Provedor A enquanto outros pods ainda enviam tráfego para ele.
 - Não há coordenação de estado entre réplicas.
 
-**Sugestão de melhoria:** Para circuit breaking coordenado em ambientes multi-réplica, considere uma das seguintes abordagens:
+Para circuit breaking coordenado em ambientes multi-réplica, considere:
 
 - **Service mesh (recomendado):** Istio ou Linkerd implementam circuit breaking na camada de infraestrutura, transparente para a aplicação.
 - **Estado compartilhado:** Armazenar contadores de falhas em Redis com TTL, permitindo que todas as réplicas compartilhem o estado do circuito.
 - **Biblioteca distribuída:** `cockatiel` com backend externo, ou soluções como Resilience4j (se migrar para JVM).
+
+### Idempotência de pagamento
+
+O endpoint atual (`POST /debts/simulate`) é uma operação de leitura/cálculo — não executa transações financeiras — e por isso é naturalmente idempotente. Ao evoluir para um endpoint de **pagamento real**, recomenda-se:
+
+- **Header `Idempotency-Key`** (UUID gerado pelo cliente) em `POST /payments/execute`.
+- **Cache da resposta** por chave com TTL (ex: Redis por 24 h): requisições repetidas com a mesma chave retornam o resultado já processado sem reexecutar a transação.
+- **Locking por chave** para requisições concorrentes com a mesma `Idempotency-Key`.
+
+A arquitetura Ports & Adapters facilita essa evolução: o adapter de pagamento real seria o único ponto a consultar/persistir a chave, sem contaminar o domínio ou a camada de aplicação.

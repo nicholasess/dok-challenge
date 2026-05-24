@@ -75,13 +75,14 @@ describe('POST /debts/simulate — Integração (2.x)', () => {
   let app: INestApplication;
   let mock_provider_a: jest.Mocked<IProvider>;
   let mock_provider_b: jest.Mocked<IProvider>;
+  let module_ref: Awaited<ReturnType<typeof buildModule>>;
 
   beforeEach(async () => {
     mock_provider_a = { fetchDebts: jest.fn() };
     mock_provider_b = { fetchDebts: jest.fn() };
 
-    const module = await buildModule([mock_provider_a, mock_provider_b]);
-    app = module.createNestApplication();
+    module_ref = await buildModule([mock_provider_a, mock_provider_b]);
+    app = module_ref.createNestApplication();
     app.useGlobalPipes(
       new ValidationPipe({
         transform: true,
@@ -149,6 +150,29 @@ describe('POST /debts/simulate — Integração (2.x)', () => {
       expect(res.status).toBe(200);
       expect(res.body.debitos).toEqual([]);
       expect(mock_provider_b.fetchDebts).not.toHaveBeenCalled();
+    });
+
+    it('Provider A com circuito aberto é pulado; Provider B é chamado diretamente', async () => {
+      // Pre-open the circuit for provider-0 by recording failures directly on the
+      // private CircuitBreaker instance, avoiding real HTTP round-trips and not
+      // affecting provider-1's circuit state.
+      const service = module_ref.get(DebtsService);
+      const cb: { recordFailure: (key: string) => void } = (service as unknown as { circuitBreaker: { recordFailure: (key: string) => void } }).circuitBreaker;
+      cb.recordFailure('provider-0');
+      cb.recordFailure('provider-0');
+      cb.recordFailure('provider-0'); // threshold=3 → circuit OPENS
+
+      mock_provider_b.fetchDebts.mockResolvedValueOnce([
+        { tipo: 'IPVA', valor_original: 1500, vencimento: '2026-12-01' },
+      ]);
+
+      const res = await request(app.getHttpServer())
+        .post('/debts/simulate')
+        .send({ placa: 'ABC1234' });
+
+      expect(res.status).toBe(200);
+      expect(mock_provider_a.fetchDebts).not.toHaveBeenCalled();
+      expect(mock_provider_b.fetchDebts).toHaveBeenCalledWith('ABC1234');
     });
   });
 
@@ -233,18 +257,20 @@ describe('POST /debts/simulate — Integração (2.x)', () => {
       expect(res.status).toBe(200);
     });
 
-    it('IPVA: valor_original="1500.00", valor_atualizado="1800.00", dias_atraso=121', () => {
+    it('IPVA: valor_original="1500.00", valor_atualizado="1800.00", dias_atraso=121, vencimento="2024-01-10"', () => {
       const ipva = res.body.debitos.find((d: { tipo: string }) => d.tipo === 'IPVA');
       expect(ipva.valor_original).toBe('1500.00');
       expect(ipva.valor_atualizado).toBe('1800.00');
       expect(ipva.dias_atraso).toBe(121);
+      expect(ipva.vencimento).toBe('2024-01-10');
     });
 
-    it('MULTA: valor_original="300.50", valor_atualizado="555.93", dias_atraso=85', () => {
+    it('MULTA: valor_original="300.50", valor_atualizado="555.93", dias_atraso=85, vencimento="2024-02-15"', () => {
       const multa = res.body.debitos.find((d: { tipo: string }) => d.tipo === 'MULTA');
       expect(multa.valor_original).toBe('300.50');
       expect(multa.valor_atualizado).toBe('555.93');
       expect(multa.dias_atraso).toBe(85);
+      expect(multa.vencimento).toBe('2024-02-15');
     });
 
     it('resumo.total_original → "1800.50"', () => {
