@@ -250,12 +250,6 @@ pnpm run lint
 pnpm run format
 ```
 
-## Considerações de Deploy
-
-### Retry com backoff exponencial
-
-O `retryWithBackoff` opera inteiramente no contexto de cada requisição — sem estado compartilhado. Funciona em qualquer ambiente, incluindo múltiplas réplicas no Kubernetes.
-
 ## Melhorias Futuras
 
 ### Circuit Breaker distribuído
